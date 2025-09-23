@@ -1,4 +1,6 @@
 # Method
+Official implementation of the paper "Understanding and Reducing the Class-Dependent Effects of Data Augmentation with A Two-Player Game Approach" accepted in TMLR (2025/6).
+
 We implement CLAss-dependent Multiplicative-weights (CLAM) method to reduce class-dependent effects of data augmentation in classification tasks.
 
 # Instructions
@@ -32,20 +34,4 @@ If this is not the case, please refer to [ffcv](https://github.com/libffcv/ffcv)
 Train a classifier with CLAM on Imagenet with crop lower bound equal to 1. In this example, "--training.crop_scal" can be set as any number between 0 (not included) and 100 (included).
 ```
 python train_imagenet.py --training.loss_type CLAM --training.crop_scale=100 --data.train_dataset train.beton --data.val_dataset test.beton
-```
-
-## Citation
-
-If you use this repo in your research, please consider citing the paper as follows:
-```
-@article{
-  jiang2025understanding,
-  title={Understanding and Reducing the Class-Dependent Effects of Data Augmentation with A Two-Player Game Approach},
-  author={Yunpeng Jiang and Yutong Ban and Paul Weng},
-  journal={Transactions on Machine Learning Research},
-  issn={2835-8856},
-  year={2025},
-  url={https://openreview.net/forum?id=zNsfgCns7x},
-  note={}
-}
 ```
