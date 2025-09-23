@@ -1,5 +1,5 @@
 # Method
-Official implementation of the paper "Understanding and Reducing the Class-Dependent Effects of Data Augmentation with A Two-Player Game Approach" accepted in TMLR (2025/6).
+Official implementation of the paper [Understanding and Reducing the Class-Dependent Effects of Data Augmentation with A Two-Player Game Approach](https://openreview.net/forum?id=zNsfgCns7x) accepted in TMLR (2025/6).
 
 We implement CLAss-dependent Multiplicative-weights (CLAM) method to reduce class-dependent effects of data augmentation in classification tasks.
 
