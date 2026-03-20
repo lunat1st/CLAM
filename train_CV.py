@@ -21,6 +21,8 @@ from fmnist_labels import *
 from mImagenet_labels import *
 from collections import OrderedDict
 
+from tqdm import tqdm
+
 class MyDataset(Dataset):
     def __init__(self, dataset):
         self.dataset = dataset
@@ -91,7 +93,7 @@ def get_transforms(task):
 
     return transform_train, transform_test
 
-def train(task, EPOCH, crop_lower_bound, focal_loss, pw_loss, tilted_weighted_loss, GGF_loss, apstar_loss, CLAM_loss, theta, gamma, discount, min_weight, weight_frequency, l2_weight, num_workers):
+def train(task, EPOCH, crop_lower_bound, focal_loss, pw_loss, tilted_weighted_loss, GGF_loss, apstar_loss, CLAM_loss, theta, gamma, discount, min_weight, weight_frequency, l2_weight, num_workers, resume):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if focal_loss:
         exp_type = '{}_focal_loss_cropbound{}_gamma{}'.format(task, crop_lower_bound, gamma)
@@ -119,6 +121,7 @@ def train(task, EPOCH, crop_lower_bound, focal_loss, pw_loss, tilted_weighted_lo
         
     start = time.time()
     batch_size = 128 # samples per minibatch
+    # batch_size = 256 # Increased batch size
     print('batch_size {}'.format(batch_size))
 
     if task in ['cifar100', 'cifar10', 'fmnist']:
@@ -231,7 +234,8 @@ def train(task, EPOCH, crop_lower_bound, focal_loss, pw_loss, tilted_weighted_lo
     criterion = nn.CrossEntropyLoss()  # use cross entropy for classification
     criterion_sum = nn.CrossEntropyLoss(reduction='sum')
     criterion_none = nn.CrossEntropyLoss(reduction='none')
-    lr = 1e-1
+    # lr = 1e-1
+    lr = 1e-1 * (batch_size / 128) # For increased batch size
     momentum = 0.9
     weight_decay = l2_weight
     optimizer = optim.SGD(net.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay, nesterov=True) # SGD as optimizer
@@ -262,7 +266,29 @@ def train(task, EPOCH, crop_lower_bound, focal_loss, pw_loss, tilted_weighted_lo
 
     START = time.time()
     best_acc = 0
+    start_epoch = 0
     log_frequency = 25
+
+    if resume:
+        if os.path.isfile(resume):
+            print('Loading checkpoint: {}'.format(resume))
+            checkpoint = torch.load(resume, map_location=device, weights_only=False)
+            print('Checkpoint epoch:', checkpoint['epoch'])
+            print(checkpoint['scheduler_state_dict'])
+            print(checkpoint['rng_state'])
+            print(type(checkpoint['rng_state']))
+            # torch.set_rng_state(checkpoint['rng_state'].byte())
+            # np.random.set_state(checkpoint['numpy_rng_state'])
+            net.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            start_epoch = checkpoint['epoch']
+            best_acc = checkpoint['best_acc']
+            if checkpoint.get('weights_per_class') is not None:
+                weights_per_class = checkpoint['weights_per_class']
+            print('Resumed from epoch {}, best_acc so far {:.3f}'.format(start_epoch, best_acc))
+        else:
+            print('No checkpoint found at: {}'.format(resume))
 
     if CLAM_loss or tilted_weighted_loss or apstar_loss:
         tmp_cols = cols.copy()
@@ -277,7 +303,7 @@ def train(task, EPOCH, crop_lower_bound, focal_loss, pw_loss, tilted_weighted_lo
         K, K_min, apstar_max_loss, alpha = 1, 1, 10, 0.5
         
     num_iters = 0
-    for epoch in range(EPOCH):
+    for epoch in tqdm(range(start_epoch, EPOCH)):
         start = time.time()
         if CLAM_loss or tilted_weighted_loss or apstar_loss:
             weights_df.loc[len(weights_df.index)] = np.concatenate([[epoch], [weights_per_class[_] for _ in weights_per_class]])
@@ -388,7 +414,7 @@ def train(task, EPOCH, crop_lower_bound, focal_loss, pw_loss, tilted_weighted_lo
             if CLAM_loss and epoch>=CLAM_start_epoch:
                 # update weights_per_class by training accuracy
                 print('label_accuracies/label_nums', label_accuracies/label_nums)
-                diff_weights = np.exp(-label_accuracies / label_nums)
+                diff_weights = np.exp(-0.5*label_accuracies / label_nums)
                 diff_weights = diff_weights / np.mean(diff_weights)
                 print('diff_weights', diff_weights)
                 
@@ -487,11 +513,26 @@ def train(task, EPOCH, crop_lower_bound, focal_loss, pw_loss, tilted_weighted_lo
                     if correct_prediction_flag[j]:
                         label_accuracies[labels[j].cpu().numpy()] += 1
             test_acc = correct / total
+            scheduler.step(test_acc) # Add scheduler
     
         print('Test Acc per label',label_accuracies / label_nums)
         print('[epoch:{}] | Test_Acc: {:.3f} | Time: {:.3f} '.format(epoch + 1, 100. * correct / total, time.time()-iter_start))
         test_acc_df.loc[len(test_acc_df.index)] = np.concatenate([[epoch], label_accuracies/label_nums, [test_acc.detach().cpu().numpy()], [0], [train_acc.detach().cpu().numpy()]])
         test_acc_df.to_csv('{}.csv'.format(exp_type))
+
+        if (epoch + 1) % 5 == 0:
+            checkpoint_path = 'checkpoint_{}_epoch{}_bs{}.pth'.format(exp_type, epoch + 1, batch_size)
+            torch.save({
+                'epoch': epoch + 1,
+                'model_state_dict': net.module.state_dict() if isinstance(net, nn.DataParallel) else net.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'best_acc': best_acc,
+                'rng_state': torch.get_rng_state(),
+                'numpy_rng_state': np.random.get_state(),
+                'weights_per_class': weights_per_class if (CLAM_loss or tilted_weighted_loss or apstar_loss) else None,
+            }, checkpoint_path)
+            print('Checkpoint saved: {}'.format(checkpoint_path))
                     
     print("Training Finished, TotalEPOCH={} Best_Acc={:.3f} Total Time={:.3f}".format(EPOCH, best_acc,time.time()-START))
     
@@ -514,7 +555,9 @@ if __name__ == "__main__":
     parser.add_argument('--min_weight', type=float, default=0.1)
     parser.add_argument('--weight_frequency', type=int, default=2)
     parser.add_argument('--l2_weight', type=float, default=5e-4)
-    parser.add_argument('--num_workers', type=int, default=16)
+    parser.add_argument('--num_workers', type=int, default=2) # Changed from 16 to 2
+    parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume from')
+
     args = parser.parse_args()
     utils.set_seed_everywhere(0)
 
@@ -562,4 +605,4 @@ if __name__ == "__main__":
     print('l2_weight', l2_weight)
     num_workers = args.num_workers
     print('num_workers', num_workers)
-    train(task=task, EPOCH=num_epochs, crop_lower_bound=crop_lower_bound, focal_loss=focal_loss, pw_loss=pw_loss, tilted_weighted_loss=tilted_weighted_loss, GGF_loss=GGF_loss, apstar_loss=apstar_loss, CLAM_loss=CLAM_loss, theta=theta, gamma=gamma, discount=discount, min_weight=min_weight, weight_frequency=weight_frequency, l2_weight=l2_weight, num_workers=num_workers)
+    train(task=task, EPOCH=num_epochs, crop_lower_bound=crop_lower_bound, focal_loss=focal_loss, pw_loss=pw_loss, tilted_weighted_loss=tilted_weighted_loss, GGF_loss=GGF_loss, apstar_loss=apstar_loss, CLAM_loss=CLAM_loss, theta=theta, gamma=gamma, discount=discount, min_weight=min_weight, weight_frequency=weight_frequency, l2_weight=l2_weight, num_workers=num_workers, resume=args.resume)
