@@ -413,8 +413,9 @@ def train(task, EPOCH, crop_lower_bound, focal_loss, pw_loss, tilted_weighted_lo
 
             if CLAM_loss and epoch>=CLAM_start_epoch:
                 # update weights_per_class by training accuracy
+                tau = 0.2
                 print('label_accuracies/label_nums', label_accuracies/label_nums)
-                diff_weights = np.exp(-label_accuracies / label_nums)
+                diff_weights = np.exp(-tau*label_accuracies / label_nums)
                 diff_weights = diff_weights / np.mean(diff_weights)
                 print('diff_weights', diff_weights)
                 
